@@ -1,0 +1,102 @@
+---
+title: "Income and Education"
+author: "Muiz Rahemtullah"
+date: "8/5/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+First we will set our working directory.
+```{r}
+setwd("~/Desktop/Data Science Summer 19/Income and Education")
+```
+
+Now we will load the tidycensus library and enter our key.
+```{r}
+library(tidycensus)
+census_api_key("ab935c7b673ec9c62b7c09dc516dd36f0d8fd03a", install = TRUE, overwrite = TRUE)
+readRenviron("~/.Renviron")
+Sys.getenv("CENSUS_API_KEY")
+```
+
+Now we will load the data in. We want the number of residents that have a bachelors degree by county in the US. We will also create a CSV of this data
+```{r}
+census_data <- get_acs(geography = "county", variables = "B15003_022")
+write.csv(census_data, "Bachelors Degree Data.csv")
+```
+
+We will also obtain the total adult population by county.
+```{r}
+census_data_2 <- get_acs(geography = "county", variables = "B15003_001")
+write.csv(census_data_2, "Adult Population Data.csv")
+```
+
+Finally, we will obtain the median household income by county.
+```{r}
+census_data_3 <- get_acs(geography = "county", variables = "B19013_001")
+write.csv(census_data_3, "Median Income Data.csv")
+```
+
+Now we will merge the latter 2
+```{r}
+census_data_2 <- merge(census_data_2, census_data_3, by = "GEOID", all.x = TRUE)
+```
+
+Now we will clean this dataset up.
+```{r}
+census_data_2 <- census_data_2[, -c(3, 6, 7)]
+colnames(census_data_2) <- c("GEOID", "County", "Adult Population Estimate", "Adult Population 90% Confidence Interval", "Median Household Income Estimate", "Median Household Income 90% Confidence Interval")
+```
+
+Now we will merge this with the first dataset.
+```{r}
+census_data <- merge(census_data, census_data_2, by = "GEOID", all.x = TRUE)
+```
+
+Now we will clean this dataset up.
+```{r}
+census_data <- census_data[, -c(3, 6)]
+colnames(census_data) <- c("GEOID", "County", "Adult Population with Bachlors Degree Estimate", "Adult Population with Bachlors Degree 90% Confidence Interval", "Adult Population Estimate", "Adult Population 90% Confidence Interval", "Median Household Income Estimate", "Median Household Income 90% Confidence Interval")
+```
+
+Now we will create a new column documenting the percentage of graduates among the entire population by county. This is the final dataset we will be working with so we will also turn this into a CSV file.
+```{r}
+attach(census_data)
+census_data$PCT_Degree <- `Adult Population with Bachlors Degree Estimate`/`Adult Population Estimate`
+attach(census_data)
+write.csv(census_data, "Final Dataset.csv")
+```
+
+Now we will plot a correlation graph of degree percentage and median household income. We must omit the ID and County columns and reduce the column names so we will quickly create a new dataset for this.
+```{r}
+library(corrplot)
+library(ggplot2)
+num_census <- census_data[,-c(1, 2)]
+colnames(num_census) <- c("Pop with Degree", "Degree CI", "Pop", "Pop CI", "Median Income", "Median Income CI", "PCT Degree")
+corrplot(cor(num_census, use="complete.obs"))
+ggplot(census_data, aes(x=PCT_Degree, y=log(`Median Household Income Estimate`))) + geom_point(col = "red") + labs(x = "Percent of Population with a Bachelors Degree", y = "Median Household Income", title = "Scatterplot of Median Household Income on Percentage of Population with a Bachelors Degree")
+```
+
+We see there is a roughly .7 correlation between Educated Population and Median household income. We will now run a regression between the two.
+```{r}
+edu_inc_fit <- lm(log(`Median Household Income Estimate`)~PCT_Degree, data = census_data)
+summary(edu_inc_fit)
+ggplot(census_data, aes(x=PCT_Degree, y=log(`Median Household Income Estimate`))) + geom_point(col = "red3") + geom_smooth(method = "lm") + labs(x = "Percent of Population with a Bachelors Degree", y = "Median Household Income", title = "Scatterplot of Median Household Income on Percentage of Population with a Bachelors Degree")
+```
+
+We will now interpret the regression. If the county's college degree residents increase by 10 percent, the median income will increase by $10 * 2.97952 = 29.7952$ percent. 
+
+We see that there is a patch on the bottom that is stagnant and that as the percentage of people with degrees increases from .1 to .2 yet the Median Household Income remains unchanged. This is likely the outlier region mentioned. In these counties, as the percent of educated people increases, the median household income does not increase. We will highlight this region be coloring it differently.
+```{r}
+library(dplyr)
+census_data %>% 
+  mutate(Odd_Region = ifelse(log(`Median Household Income Estimate`) < 10 & PCT_Degree > .1 & PCT_Degree < .2, 'Yes', 'No')) %>%
+  ggplot(census_data, mapping = aes(x=PCT_Degree, y=`Median Household Income Estimate`, color = Odd_Region)) + geom_point() + labs(x = "Percent of Population with a Bachelors Degree", y = "Median Household Income", title = "Scatterplot of Median Household Income on Percentage of Population with a Bachelors Degree")
+```
+
+When we examine the dataset in detail, we can see that the Blue Region represents counties in Puerto Rico. This conclusion makes sense since Puerto Rico has suffered from natural disasters such as hurricanes recently. With their infrastructure compromised, it would be difficult to find a higher paying jobs there. 
